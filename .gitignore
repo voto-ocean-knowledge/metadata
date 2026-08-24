@@ -1,3 +1,7 @@
 *.csv
 .idea
 *.log
+iso.xml
+voto_erddap_data_cache
+__pycache__
+.ipynb_checkpoints

@@ -11,9 +11,49 @@ cwdir = os.getcwd()
 
 _log = logging.getLogger(__name__)
 
+def membrane_calculations():
+    e = utils.init_erddap()
+    url = e.get_search_url(search_for="membrane_serial", response="csv")
+    df = pd.read_csv(url)
+    missions=list(df["Dataset ID"])
+    nrt=[]
+    for word in missions:
+        if word.startswith('nrt'):
+            nrt.append(word)
+    ds_dict = utils.download_glider_dataset(nrt, variables=(['time', 'dive_num']), nrt_only=True)
 
-def write_csv(df, name):
-    if not "datasetID" in list(df):
+    membrane_serial = []
+    datasetID = []
+    total_cycles = []
+
+    df_membrane = pd.DataFrame(
+        {'membrane_serial': membrane_serial, 'dataset_ids': datasetID, 'total cycles': total_cycles})
+
+    membrane = []
+    for i in np.arange(len(ds_dict)):
+        ds = ds_dict[nrt[i]]
+        membrane.append(ds.membrane_serial)
+
+    df_membrane['membrane_serial'] = list(set(membrane))  # reduce to only unique membranes in list
+
+    for n in np.arange(len(df_membrane)):
+        df_membrane.loc[n, 'total cycles'] = 0  # make 0 so addition can be used later on with cycles
+        empty_list = []
+        for i in np.arange(len(ds_dict)):
+            ds = ds_dict[nrt[i]]
+            if df_membrane.loc[n, 'membrane_serial'] == ds.membrane_serial:
+                empty_list.append(ds.dataset_id)  # add dataset name to track missions for serial
+
+                df_membrane.loc[n, 'total cycles'] = df_membrane.loc[n, 'total cycles'] + np.max(
+                    ds.dive_num.values)  # add max amount of cycle per mission
+        df_membrane.loc[n, 'dataset_ids'] = str(empty_list)
+    name = 'membrane'
+    write_csv(df_membrane, name, multi_id=True)
+    subprocess.check_call(['/usr/bin/rsync', f'{cwdir}/output/{name}.csv', 'pilot@observations.voiceoftheocean.org:/data/voto/pilot_tables'])
+
+
+def write_csv(df, name, multi_id=False):
+    if not "datasetID" in list(df) and not multi_id:
         df["datasetID"] = df.index
     df = df.convert_dtypes()
     _log.info(f"write {name}.csv")
@@ -35,8 +75,6 @@ def meta_proc():
     df_datasets.drop("allDatasets", inplace=True)
 
     df_datasets = df_datasets[df_datasets.index.str[:3] == "nrt"]
-    df_datasets = df_datasets.drop('nrt_SEA057_M75')
-    df_datasets = df_datasets.drop('nrt_SEA070_M29')
 
     # df_datasets = df_datasets.head(3)
     _log.info(f"found {len(df_datasets)} datasets")
@@ -111,7 +149,7 @@ def meta_proc():
     _log.info(f"merged metadata and attributes ")
     # Create a smaller, more user friendly table
 
-    table = pd.DataFrame(columns=['glider_serial', 'deployment_id', 'basin', 'deployment_start', 'deployment_end',
+    table = pd.DataFrame(columns=['platform_serial', 'deployment_id', 'basin', 'deployment_start', 'deployment_end',
                                   'available_variables', 'science_variables', 'ctd', 'oxygen', 'optics', 'ad2cp',
                                   'irradiance', 'nitrate', 'datasetID'])
     missions = df_datasets.index
@@ -121,7 +159,10 @@ def meta_proc():
     for i in range(len(missions)):
 
         d = dic[missions[i]]
-        table.glider_serial[i] = f'SEA0{d["glider_serial"]}'
+        if 'platform_serial' in d.keys():
+            table.platform_serial[i] = f'{d["platform_serial"]}'
+        else:
+            table.platform_serial[i] = f'SEA0{d["glider_serial"]}'
         table.deployment_id[i] = d["deployment_id"]
         table.deployment_start[i] = d["deployment_start"][:10]
         table.deployment_end[i] = d["deployment_end"][:10]
@@ -130,8 +171,10 @@ def meta_proc():
         table.available_variables[i] = d["variables"]
         table.science_variables[i] = d["variables"]
         table.ctd[i] = d['ctd']
-        table.oxygen[i] = d['oxygen']
-        table.optics[i] = d['optics']
+        if 'optics' in d:
+            table.optics[i] = d['optics']
+        if 'oxygen' in d:
+            table.oxygen[i] = d['oxygen']
         if 'irradiance' in d:
             table.irradiance[i] = d['irradiance']
         if 'AD2CP' in d:
@@ -174,7 +217,7 @@ def proc_ballast(missions):
     _log.info(f"ballast data present for {len(df[df.datasetID.str.contains('delayed')])} delayed datasets")
 
 
-if __name__ == '__main__':
+def main():
     logf = '/home/pipeline/log/metadata_tables.log'
     logging.basicConfig(filename=logf,
                         filemode='a',
@@ -183,9 +226,11 @@ if __name__ == '__main__':
                         datefmt='%Y-%m-%d %H:%M:%S')
     _log.info("Start processing")
     meta_proc()
-    all_nrt = ballast_info.select_datasets(mission_num=None, glider_serial=None, data_type='nrt')
-    all_delayed = ballast_info.select_datasets(mission_num=None, glider_serial=None, data_type='delayed')
+    all_nrt = ballast_info.select_datasets(mission_num=None, platform_serial=None, data_type='nrt')
+    all_delayed = ballast_info.select_datasets(mission_num=None, platform_serial=None, data_type='delayed')
     proc_ballast(all_nrt)
     proc_ballast(all_delayed)
     _log.info("End processing")
 
+if __name__ == '__main__':
+    membrane_calculations()

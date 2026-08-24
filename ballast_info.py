@@ -12,11 +12,11 @@ def get_glider_dataset_ids():
 
     e.dataset_id = "allDatasets"
     df_datasets = e.to_pandas()['datasetID']
-    df_glider_datasets = df_datasets[df_datasets.str.contains("SEA")]
+    df_glider_datasets = df_datasets[df_datasets.str.contains("_S")]
     return df_glider_datasets
 
 
-def select_datasets(glider_serial=None, mission_num=None, data_type='nrt'):
+def select_datasets(platform_serial=None, mission_num=None, data_type='nrt'):
     '''
     inputs:
     glider_serial= xx
@@ -24,9 +24,8 @@ def select_datasets(glider_serial=None, mission_num=None, data_type='nrt'):
     '''
 
     df_datasets = get_glider_dataset_ids()
-    if glider_serial:
-        glider_num = str(glider_serial).zfill(3)
-        df_datasets = df_datasets[df_datasets.str.contains(f"SEA{glider_num}")]
+    if platform_serial:
+        df_datasets = df_datasets[df_datasets.str.contains(f"{platform_serial}")]
     if mission_num:
         df_datasets = df_datasets[df_datasets.str.contains(f"M{mission_num}")]
 
@@ -43,7 +42,7 @@ def ballast_info(glider_datasets, threshold=420, noise_threshold=5):
     noise_threshold= xx ml, minimum difference between two consequetive points in ballast position to be accounted for in calculating total active pumping during mission. To not account for noise in ballast pumping calculations.
     '''
     
-    ds_dict = utils.download_glider_dataset(glider_datasets, nrt_only=False, variables=(['ballast_pos', 'time', 'dive_num', 'ballast_cmd', 'nav_state', 'security_level']))
+    ds_dict = utils.download_glider_dataset(glider_datasets, nrt_only=False, variables=(['ballast_pos', 'time', 'dive_num', 'ballast_cmd', 'nav_state', 'security_level', 'voltage', 'longitude', 'latitude', 'depth']))
     #Max, min, and total pumping + max depth values for the full mission
     max_ballast=[]
     min_ballast=[]
@@ -66,14 +65,34 @@ def ballast_info(glider_datasets, threshold=420, noise_threshold=5):
     ds_name=[]
     basin=[]
     mission_no=[]
-    glider_serial=[]
+    platform_serial=[]
     
     #Which extreme value to check high pumping volumes and create array to how many times crossed over for each mission
     cross_over_threshold=[]
     threshold_value=[]
-    
+
+    starts = []
+    ends = []
+    durations = []
+    start_lon = []
+    start_lat = []
+    end_lon = []
+    end_lat = []
+    start_voltage = []
+    end_voltage = []
+
+
     for name, ds in ds_dict.items():
-    
+        starts.append(ds.time.values[0])
+        ends.append(ds.time.values[-1])
+        durations.append((ds.time.values[-1] - ds.time.values[0]).astype('timedelta64[D]').astype(int))
+        start_lon.append(ds.longitude.values[0])
+        start_lat.append(ds.latitude.values[0])
+        end_lon.append(ds.longitude.values[-1])
+        end_lat.append(ds.latitude.values[-1])
+        start_voltage.append(np.nanmedian(ds.voltage[:10]))
+        end_voltage.append(np.nanmedian(ds.voltage[-10:]))
+
         #Max and min ballast values per mission and total dives + total volume pumped for mission
         max_ballast.append(np.nanmax(ds.ballast_pos))
         min_ballast.append(np.nanmin(ds.ballast_pos))
@@ -155,8 +174,12 @@ def ballast_info(glider_datasets, threshold=420, noise_threshold=5):
             basin.append("")
         ds_name.append(name)
         mission_no.append(ds.deployment_id)
-        glider_serial.append(ds.glider_serial)
-    
+        if "platform_serial" in ds.keys():
+            platform_serial.append(ds.platform_serial)
+        else:
+            platform_serial.append(ds.glider_serial)
+
+
     #Make all values integers
     total_dives=np.array(total_dives).astype(int)
     max_ballast=np.array(max_ballast).astype(int)
@@ -165,12 +188,23 @@ def ballast_info(glider_datasets, threshold=420, noise_threshold=5):
     avg_pump_max=np.array(avg_pump_max).astype(int)
     avg_pump_min=np.array(avg_pump_min).astype(int)
     high_volume=np.array(high_volume).astype(int)
+    starts = np.array(starts)
+    ends = np.array(ends)
+    durations = np.array(durations).astype(int)
+    start_lon = np.array(start_lon).astype(float)
+    start_lat = np.array(start_lat).astype(float)
+    end_lon = np.array(end_lon).astype(float)
+    end_lat = np.array(end_lat).astype(float)
+    start_voltage = np.array(start_voltage).astype(float)
+    end_voltage = np.array(end_voltage).astype(float)
 
-   
-    df_pumps = pd.DataFrame({'datasetID': ds_name, 'deployment_id': mission_no, 'glider_serial': glider_serial,
+    df_pumps = pd.DataFrame({'datasetID': ds_name, 'deployment_id': mission_no, 'platform_serial': platform_serial,
                              'total dives': total_dives, 'max depth (m)': max_depth, 'max ballast (ml)': max_ballast, 'min ballast (ml)': min_ballast, 'avg max pumping value (ml)': avg_pump_max,
                              'std_max': std_pump_max, 'std_min': std_pump_min , 'avg min pumping value (ml)': avg_pump_min, 'avg pumping range (ml)': avg_pump_range, 'total active pumping (ml)': total_pump, 
-                             'times crossing over '+str(threshold)+' ml': cross_over_threshold, 'basin': basin, 'threshold': threshold_value } )
+                             'times crossing over '+str(threshold)+' ml': cross_over_threshold, 'basin': basin, 'threshold': threshold_value,
+                             'Deployment time': starts, 'Recovery time': ends, 'Mission duration (days)': durations, 'Deployment longitude': start_lon,
+                             'Deployment latitude': start_lat, 'Recovery longitude': end_lon, 'Recovery latitude': end_lat,
+                             'Deployment voltage (V)': start_voltage, 'Recovery voltage (v)': end_voltage})
     #'datapoints over '+str(threshold)+' ml': high_volume, 'Ballast positions over '+str(threshold)+' ml (%)' :percent_high_volume,
     return df_pumps
 
@@ -231,10 +265,11 @@ def ballast_plots(df_pumps):
 
 
 if __name__ == '__main__':
+    df = ballast_info(["nrt_SEA069_M37"])
     from metadata_tables import write_csv
     outfile = Path("output/ballast.csv")
-    all_delayed = select_datasets(mission_num=None, glider_serial=None, data_type='delayed')
-    for ds_id in all_delayed:
+    all_nrt = select_datasets(mission_num=None, platform_serial=None, data_type='delayed')
+    for ds_id in all_nrt:
         to_download = [ds_id]
         if outfile.exists():
             df = pd.read_csv(outfile, sep=';')

@@ -80,7 +80,7 @@ def get_meta(dataset_id, protocol="tabledap"):
         return _get_meta_griddap(dataset_id)
     e = init_erddap(protocol=protocol)
     e.dataset_id = dataset_id
-    meta = e.to_ncCF()
+    meta = e.to_ncCF(timeout=300)
     attrs = {}
     for key_name in dir(meta):
         if key_name[0] != "_":
