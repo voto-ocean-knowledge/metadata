@@ -63,9 +63,9 @@ def extract_global_attrs(path: Path) -> dict:
         for name, value in ds.attrs.items():
             key = f"attr{name}" if name in BOOKKEEPING_COLS else name
             attrs[key] = value
+        dataset_id = ds.attrs['id']
         id_parts = ds.attrs['id'].split('_')
-        dataset_id = id_parts[-1]
-        attrs['data_mode'] = dataset_id
+        attrs['data_mode'] = id_parts[-1]
         attrs['erddap_url'] = f"http://136.243.54.252:8082/erddap/tabledap/{dataset_id}.html"
 
         for name, variable in ds.variables.items():
